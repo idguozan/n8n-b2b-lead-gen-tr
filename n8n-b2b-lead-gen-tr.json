@@ -1,0 +1,453 @@
+{
+  "name": "n8n-b2b-lead-gen-tr",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {}
+          ]
+        }
+      },
+      "id": "a4590574-fe48-4c0b-968a-796c1704edf6",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        1664,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "fields": {
+          "values": [
+            {
+              "name": "product_url"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "786d9bf4-1f34-46eb-ae55-e6eecaf0bce3",
+      "name": "Input URL",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.2,
+      "position": [
+        1888,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.product_url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
+            },
+            {
+              "name": "Accept-Language",
+              "value": "tr-TR,tr;q=0.9,en;q=0.8"
+            },
+            {
+              "name": "Accept",
+              "value": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 90000
+        }
+      },
+      "id": "4ec67ad6-710e-4ce7-8951-f99b2d56615c",
+      "name": "Get Product Page",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        2112,
+        560
+      ],
+      "retryOnFail": true,
+      "maxTries": 4,
+      "waitBetweenTries": 2500
+    },
+    {
+      "parameters": {
+        "jsCode": "const src = String($json.data ?? $json.body ?? $json.html ?? $json.response ?? '');\n\nif (!src || src.length < 200) {\n  throw new Error('Sayfa HTML icerigi bos geldi.');\n}\n\nfunction removeNoise(html) {\n  return html\n    .replace(/<script[\\s\\S]*?<\\/script>/gi, ' ')\n    .replace(/<style[\\s\\S]*?<\\/style>/gi, ' ')\n    .replace(/<noscript[\\s\\S]*?<\\/noscript>/gi, ' ')\n    .replace(/<!--[\\s\\S]*?-->/g, ' ')\n    .replace(/<svg[\\s\\S]*?<\\/svg>/gi, ' ');\n}\n\nfunction decodeEntities(str) {\n  const named = {\n    nbsp: ' ',\n    amp: '&',\n    quot: '\"',\n    apos: \"'\",\n    lt: '<',\n    gt: '>'\n  };\n\n  let out = str.replace(/&([a-zA-Z]+);/g, (m, n) => {\n    const k = n.toLowerCase();\n    return Object.prototype.hasOwnProperty.call(named, k) ? named[k] : ' ';\n  });\n\n  out = out.replace(/&#x([0-9a-fA-F]+);/g, (m, h) => {\n    const cp = parseInt(h, 16);\n    return Number.isFinite(cp) ? String.fromCodePoint(cp) : ' ';\n  });\n\n  out = out.replace(/&#([0-9]+);/g, (m, d) => {\n    const cp = parseInt(d, 10);\n    return Number.isFinite(cp) ? String.fromCodePoint(cp) : ' ';\n  });\n\n  return out;\n}\n\nfunction stripTags(html) {\n  return html.replace(/<[^>]+>/g, ' ');\n}\n\nfunction normalize(s) {\n  return s\n    .toLowerCase()\n    .normalize('NFD')\n    .replace(/[\\u0300-\\u036f]/g, '');\n}\n\nfunction pickMainBlock(html) {\n  const base = removeNoise(html);\n  const body = base.match(/<body\\b[\\s\\S]*?<\\/body>/i);\n  const scope = body ? body[0] : base;\n\n  const patterns = [\n    /<main\\b[\\s\\S]*?<\\/main>/gi,\n    /<article\\b[\\s\\S]*?<\\/article>/gi,\n    /<section\\b[^>]*(product|urun|detay|detail|icerik|content|entry|post)[^>]*>[\\s\\S]*?<\\/section>/gi\n  ];\n\n  const blocks = [];\n  for (const p of patterns) {\n    const found = scope.match(p) || [];\n    for (const f of found) blocks.push(f);\n  }\n\n  if (!blocks.length) return scope;\n  blocks.sort((a, b) => b.length - a.length);\n  return blocks[0];\n}\n\nconst titleMatch = src.match(/<title[^>]*>([\\s\\S]*?)<\\/title>/i);\nconst pageTitleRaw = titleMatch ? stripTags(titleMatch[1]) : '';\nconst pageTitle = decodeEntities(pageTitleRaw).replace(/\\s+/g, ' ').trim().split('|')[0].trim();\n\nconst mainHtml = pickMainBlock(src);\nlet text = decodeEntities(stripTags(mainHtml));\n\ntext = text\n  .replace(/\\b(Anasayfa|Hizmetlerimiz|Urunlerimiz|Ürünlerimiz|Haberler|Kurumsal|Hakkimizda|Hakkımızda|Kariyer|Partnerimiz Olun|Iletisim|İletişim|Cerez Politikasi|Çerez Politikası|Sosyal Medya|Uygulama Magazasi|Uygulama Mağazası)\\b/gi, ' ')\n  .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}/gi, ' ')\n  .replace(/(?:\\+?90|0)?\\s*\\(?\\d{3}\\)?\\s*\\d{3}\\s*\\d{2}\\s*\\d{2}/g, ' ')\n  .replace(/\\s+/g, ' ')\n  .trim();\n\nconst stopWords = new Set([\n  've', 'ile', 'icin', 'yeni', 'nesil', 'deneyim', 'cozum', 'platform',\n  'creamobile', 'mobil', 'uygulama', 'gelistirme', 'ltd', 'sti'\n]);\n\nconst titleTerms = normalize(pageTitle)\n  .split(/[^a-z0-9]+/)\n  .filter(w => w.length >= 3 && !stopWords.has(w));\n\nconst focusTerms = [...new Set(titleTerms)].slice(0, 8);\n\nconst sentences = text.match(/[^.!?]+[.!?]?/g) || [text];\nif (focusTerms.length && sentences.length > 5) {\n  const keep = new Set();\n\n  for (let i = 0; i < sentences.length; i++) {\n    const s = normalize(sentences[i]);\n    let score = 0;\n    for (const t of focusTerms) {\n      if (s.includes(t)) score++;\n    }\n    if (score > 0) {\n      keep.add(i);\n      keep.add(i + 1);\n    }\n  }\n\n  const picked = [...keep]\n    .sort((a, b) => a - b)\n    .filter(i => i >= 0 && i < sentences.length)\n    .map(i => sentences[i].trim())\n    .filter(Boolean);\n\n  if (picked.length >= 3) {\n    text = picked.join(' ');\n  }\n}\n\nconst endMarkers = ['bize ulasin', 'ofislerimiz', 'baglantilar', 'copyright'];\nconst low = normalize(text);\nlet cut = -1;\nfor (const m of endMarkers) {\n  const idx = low.indexOf(m);\n  if (idx !== -1) cut = cut === -1 ? idx : Math.min(cut, idx);\n}\nif (cut > 0) text = text.slice(0, cut).trim();\n\nif (!text || text.length < 350) {\n  throw new Error('Urun icerigi yeterince ayrisamadi. Sayfa yapisi farkli olabilir.');\n}\n\nreturn [\n  {\n    json: {\n      page_title: pageTitle,\n      focus_terms: focusTerms,\n      cleaned_text: text.slice(0, 9000)\n    }\n  }\n];"
+      },
+      "id": "819d7e68-f877-4b7d-a448-a54cec7ecfd2",
+      "name": "Clean Product Text",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2336,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=GOREV\nSen B2B hedef kitle analistisin.\nSadece verilen urun sayfasina gore, bu urunu satin alma ihtimali yuksek kurum tiplerini cikar.\n\nGIRDI_1_URUN_BASLIGI\n{{ $json.page_title || \"\" }}\n\nGIRDI_2_ODAK_TERIMLER\n{{ Array.isArray($json.focus_terms) ? $json.focus_terms.join(\", \") : \"\" }}\n\nGIRDI_3_URUN_METNI\n{{ $json.cleaned_text }}\n\nANALIZ_KURALLARI\n1) Sadece bu urune odaklan. Site geneli, menu, footer, iletisim, ofis adresleri, diger urun adlari ve sirket tanitim metinlerini yok say.\n2) ODAK_TERIMLER ve URUN_BASLIGI ile dogrudan ilgili olmayan bolumleri dahil etme.\n3) Rakip, yazilim saglayicisi, ajans, danismanlik, entegrator, cozum ortagi segmentlerini yazma.\n4) Segmentler genel ve bos ifadeler olamaz. YASAK ornekler: \"kurumsal firmalar\", \"buyuk olcekli isletmeler\", \"holdingler\".\n5) Segmentler satin alma tarafini temsil etmeli (urun kullanicisi kurum tipi).\n6) Her segment icin aranabilir, somut ve sektorel must_keywords ver.\n\nSADECE_JSON_DON\n{\n  \"product_context\": \"max 80 kelime, urunun ne oldugu ve hangi operasyonel ihtiyaci cozdgugu\",\n  \"customer_segments\": [\n    {\n      \"segment\": \"kurum tipi\",\n      \"must_keywords\": [\"terim1\", \"terim2\", \"terim3\"],\n      \"why_fit\": \"kisa gerekce\"\n    }\n  ],\n  \"negative_company_terms\": [\n    \"yazilim\", \"software\", \"saas\", \"danismanlik\", \"entegrator\", \"ajans\", \"cozum ortagi\", \"platform\", \"vendor\"\n  ],\n  \"generic_words_to_avoid\": [\n    \"kurumsal\", \"buyuk olcekli\", \"holding\", \"firma\", \"isletme\", \"sirketler grubu\"\n  ]\n}\n\nJSON_KALITE_KURALLARI\n1) customer_segments tam olarak 6 adet olmali.\n2) Her segmentte must_keywords en az 3, en fazla 6 adet olmali.\n3) must_keywords tek kelimelik asiri genel ifadeler olamaz; tercihen 2+ kelimelik sektorel terimler kullan.\n4) product_context icinde sadece urun odakli ozet olsun.\n5) JSON disinda hicbir metin yazma."
+      },
+      "id": "abc63f46-dab5-49f2-9212-9346482ff562",
+      "name": "AI1 Product Analyzer",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.4,
+      "position": [
+        2496,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-2.5-flash-lite",
+        "options": {
+          "temperature": 0.1
+        }
+      },
+      "id": "7fea73c9-dcfb-44ae-9b88-a77830559a61",
+      "name": "Google Gemini Chat Model 1",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        2544,
+        784
+      ],
+      "credentials": {
+        "googlePalmApi": {
+          "id": "hDwHCErTmWPAjB5B",
+          "name": "Google Gemini(PaLM) Api account 7"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\nconst raw = String(item.text || item.output || \"\").trim();\n\nfunction readJson(str) {\n  try {\n    return JSON.parse(str);\n  } catch (e) {\n    const s = str.indexOf(\"{\");\n    const t = str.lastIndexOf(\"}\");\n    if (s === -1 || t === -1 || t <= s) {\n      throw new Error(\"AI1 gecerli JSON dondurmedi.\");\n    }\n    return JSON.parse(str.slice(s, t + 1));\n  }\n}\n\nconst data = readJson(raw);\n\nif (!data.product_context) {\n  throw new Error(\"AI1: product_context eksik.\");\n}\n\nif (!Array.isArray(data.customer_segments) || data.customer_segments.length < 6) {\n  throw new Error(\"AI1: customer_segments yetersiz.\");\n}\n\nfor (const seg of data.customer_segments) {\n  if (!seg || !Array.isArray(seg.must_keywords) || seg.must_keywords.length < 3) {\n    throw new Error(\"AI1: Her segmentte en az 3 must_keywords olmali.\");\n  }\n}\n\nreturn [{ json: data }];"
+      },
+      "id": "1f9712f7-566f-4942-93d6-9c03826addf7",
+      "name": "Parse AI1 JSON",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2800,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=GOREV\nAsagidaki ANALIZ_JSON icindeki customer_segments alanini kullanarak LinkedIn sirket arama queryleri uret.\n\nANALIZ_JSON\n{{ JSON.stringify($json) }}\n\nKATII KURALLAR\n1) Sadece customer_segments icindeki segmentleri kullan. Yeni segment uretme.\n2) Segment adini birebir koru, degistirme.\n3) Her segment icin TAM 2 query uret.\n4) Toplam query sayisi TAM 12 olmali.\n5) Her queryde en az 2 adet used_keywords olmalı ve query icinde cift tirnakla gecmeli.\n6) Her query su parcalari icermeli:\n   - site:linkedin.com/company\n   - Turkiye\n   - negatif terimler:\n     -yazilim -software -saas -danismanlik -entegrator -ajans -platform -cozum -vendor\n7) Genel bos ifade kullanma: kurumsal, buyuk olcekli, holding, firma, isletme.\nKESIN YASAK:\nquery ve segment icinde su kelimeler gecmeyecek:\nkurumsal, buyuk olcekli, holding, firma, isletme, sirketler grubu.\nBu kelimelerden biri gecerse o query gecersizdir.\n8) JSON disinda hicbir sey yazma.\n\nSADECE SU JSON FORMATI\n{\n  \"queries\": [\n    {\n      \"segment\": \"customer_segments icinden birebir\",\n      \"used_keywords\": [\"keyword1\", \"keyword2\"],\n      \"query\": \"site:linkedin.com/company (\\\"keyword1\\\" OR \\\"keyword2\\\") \\\"segment\\\" Turkiye -yazilim -software -saas -danismanlik -entegrator -ajans -platform -cozum -vendor\",\n      \"reason\": \"kisa\"\n    }\n  ],\n  \"meta\": {\n    \"query_count\": 12\n  }\n}"
+      },
+      "id": "43ffa9a4-f7ef-4db5-b194-3f68517ecb13",
+      "name": "AI2 Query Builder",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.4,
+      "position": [
+        2976,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-2.5-flash-lite",
+        "options": {
+          "maxOutputTokens": 2048,
+          "temperature": 0
+        }
+      },
+      "id": "e1007c28-63ac-482e-9ec1-37114e3f905f",
+      "name": "Google Gemini Chat Model 2",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        3008,
+        784
+      ],
+      "retryOnFail": true,
+      "credentials": {
+        "googlePalmApi": {
+          "id": "hDwHCErTmWPAjB5B",
+          "name": "Google Gemini(PaLM) Api account 7"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = (($json.text ?? $json.output ?? '') + '').trim();\n\nfunction parseJson(str) {\n  try {\n    return JSON.parse(str);\n  } catch {\n    const s = str.indexOf('{');\n    const t = str.lastIndexOf('}');\n    if (s < 0 || t < 0 || t <= s) throw new Error('AI2 gecerli JSON donmedi');\n    return JSON.parse(str.slice(s, t + 1));\n  }\n}\n\nfunction normTr(s) {\n  return String(s || '')\n    .toLowerCase()\n    .replace(/ı/g, 'i')\n    .replace(/ğ/g, 'g')\n    .replace(/ü/g, 'u')\n    .replace(/ş/g, 's')\n    .replace(/ö/g, 'o')\n    .replace(/ç/g, 'c')\n    .replace(/\\s+/g, ' ')\n    .trim();\n}\n\nfunction esc(s) {\n  return String(s).replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&');\n}\n\nconst data = parseJson(raw);\nconst arr = Array.isArray(data.queries) ? data.queries : [];\nif (!arr.length) throw new Error('AI2 queries bos geldi');\n\nconst weakWords = [\n  'kurumsal',\n  'buyuk olcekli',\n  'holding',\n  'firma',\n  'isletme',\n  'sirketler grubu'\n];\n\nconst mustNeg = [\n  '-yazilim',\n  '-software',\n  '-saas',\n  '-danismanlik',\n  '-entegrator',\n  '-ajans',\n  '-platform',\n  '-cozum',\n  '-vendor'\n];\n\nconst out = [];\nconst seen = new Set();\nconst dropped = [];\n\nfor (const q of arr) {\n  const segment = String(q.segment || '').trim();\n  let query = String(q.query || '').trim();\n  const used = (Array.isArray(q.used_keywords) ? q.used_keywords : [])\n    .map(x => String(x || '').trim())\n    .filter(Boolean);\n\n  if (!query || !/site:linkedin\\.com\\/company/i.test(query)) {\n    dropped.push('linkedin format eksik');\n    continue;\n  }\n\n  const nQuery = normTr(query);\n  if (weakWords.some(w => nQuery.includes(w))) {\n    dropped.push('zayif ifade bulundu');\n    continue;\n  }\n\n  if (!/\\bTurkiye\\b/i.test(query)) {\n    query += ' Turkiye';\n  }\n\n  if (used.length >= 2) {\n    const missing = used.filter(k => !new RegExp(`\"${esc(k)}\"`, 'i').test(query));\n    if (missing.length) {\n      query += ' (' + missing.map(k => `\"${k}\"`).join(' OR ') + ')';\n    }\n  }\n\n  const low = query.toLowerCase();\n  for (const n of mustNeg) {\n    if (!low.includes(n)) query += ' ' + n;\n  }\n\n  const key = query.toLowerCase().replace(/\\s+/g, ' ').trim();\n  if (seen.has(key)) continue;\n  seen.add(key);\n\n  out.push({\n    json: {\n      segment: segment || 'N/A',\n      query,\n      must_terms: used\n    }\n  });\n}\n\nif (out.length < 6) {\n  throw new Error(`AI2 kalitesi dusuk. Gecerli query: ${out.length}, elenen: ${dropped.length}`);\n}\n\nreturn out.slice(0, 12);"
+      },
+      "id": "8cb58d95-c41f-4a59-8993-af16c24a8c38",
+      "name": "Parse AI2 Queries",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3296,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://www.searchapi.io/api/v1/search",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "engine",
+              "value": "google"
+            },
+            {
+              "name": "q",
+              "value": "={{ $json.query }}"
+            },
+            {
+              "name": "gl",
+              "value": "tr"
+            },
+            {
+              "name": "hl",
+              "value": "tr"
+            },
+            {
+              "name": "num",
+              "value": "20"
+            },
+            {
+              "name": "api_key",
+              "value": "YOUR_API_KEY"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 90000
+        }
+      },
+      "id": "74fdf16f-663a-4020-a493-ae750774d616",
+      "name": "SearchAPI Google",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        3488,
+        560
+      ],
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 3000,
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $json;\n\nif (response.error || response.httpCode) {\n  return [];\n}\n\nconst today = new Date().toISOString().slice(0, 10);\nconst q = String((response.search_parameters && response.search_parameters.q) || '').toLowerCase();\nconst mustTerms = [...q.matchAll(/\"([^\"]+)\"/g)]\n  .map(m => m[1].toLowerCase().trim())\n  .filter(t => t.length >= 3);\n\nconst providerWords = [\n  'yazilim', 'software', 'saas', 'danismanlik', 'consulting', 'entegrator',\n  'agency', 'ajans', 'cozum ortagi', 'platform', 'vendor', 'solution provider'\n];\n\nconst results = Array.isArray(response.organic_results) ? response.organic_results : [];\nconst seen = new Set();\nconst out = [];\n\nfor (const r of results) {\n  const link = String(r.link || '').trim();\n  if (!/linkedin\\.com\\/company\\//i.test(link)) continue;\n  if (/\\/jobs\\/|\\/people\\/|\\/school\\/|\\/posts\\/|\\/events\\//i.test(link)) continue;\n\n  const text = (String(r.title || '') + ' ' + String(r.snippet || '')).toLowerCase();\n\n  let providerHit = false;\n  for (const w of providerWords) {\n    if (text.includes(w)) {\n      providerHit = true;\n      break;\n    }\n  }\n  if (providerHit) continue;\n\n  let overlap = 0;\n  for (const t of mustTerms) {\n    if (text.includes(t)) overlap++;\n  }\n  if (mustTerms.length > 0 && overlap === 0) continue;\n\n  const norm = link.replace(/\\/$/, '').toLowerCase();\n  if (seen.has(norm)) continue;\n  seen.add(norm);\n\n  const title = String(r.title || 'N/A')\n    .replace(/\\s*\\|\\s*linkedin.*$/i, '')\n    .replace(/\\s*-\\s*linkedin.*$/i, '')\n    .trim();\n\n  out.push({\n    json: {\n      business_name: title || 'N/A',\n      website: link,\n      snippet: String(r.snippet || 'N/A').trim(),\n      email: 'Not found',\n      phone: 'Not found',\n      position: String(r.position || out.length + 1),\n      scraped_date: today,\n      address: String(r.displayed_link || 'LinkedIn'),\n      rating: '',\n      reviews: '',\n      relevance_score: overlap\n    }\n  });\n}\n\nreturn out;"
+      },
+      "id": "8b74312d-7000-49ab-9763-0cb6b4dcf2c5",
+      "name": "Extract LinkedIn Leads",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3728,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const inItems = $input.all();\nconst out = [];\nconst seen = new Set();\n\nfor (const item of inItems) {\n  const row = item.json || {};\n  const score = Number(row.relevance_score || 0);\n  if (score < 1) continue;\n\n  const key = String(row.website || '').replace(/\\/$/, '').toLowerCase();\n  if (!key || seen.has(key)) continue;\n  seen.add(key);\n\n  delete row.relevance_score;\n  out.push({ json: row });\n}\n\nif (out.length === 0) {\n  throw new Error('Filtre sonrasi uygun musteri adayi kalmadi. Queryler fazla genis veya urun metni yetersiz.');\n}\n\nreturn out;"
+      },
+      "id": "6a235319-f35b-42c8-8b2e-8f13ca9ba44f",
+      "name": "Lead Quality Gate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3952,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "",
+          "mode": "url"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "",
+          "mode": "name"
+        }
+      },
+      "id": "7a0ba83f-6fb0-4b1b-9427-7afdb90317e8",
+      "name": "Write Leads",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.1,
+      "position": [
+        4176,
+        560
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "ntzVV2wREB5iKwG3",
+          "name": "Google Sheets account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Input URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Input URL": {
+      "main": [
+        [
+          {
+            "node": "Get Product Page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Product Page": {
+      "main": [
+        [
+          {
+            "node": "Clean Product Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clean Product Text": {
+      "main": [
+        [
+          {
+            "node": "AI1 Product Analyzer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model 1": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI1 Product Analyzer",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI1 Product Analyzer": {
+      "main": [
+        [
+          {
+            "node": "Parse AI1 JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse AI1 JSON": {
+      "main": [
+        [
+          {
+            "node": "AI2 Query Builder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model 2": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI2 Query Builder",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI2 Query Builder": {
+      "main": [
+        [
+          {
+            "node": "Parse AI2 Queries",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse AI2 Queries": {
+      "main": [
+        [
+          {
+            "node": "SearchAPI Google",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SearchAPI Google": {
+      "main": [
+        [
+          {
+            "node": "Extract LinkedIn Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract LinkedIn Leads": {
+      "main": [
+        [
+          {
+            "node": "Lead Quality Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lead Quality Gate": {
+      "main": [
+        [
+          {
+            "node": "Write Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "e49f7f10-0fd6-4923-939e-7fd2dea798b7",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "3e3b9f60282f978a3324705fbcff84dedff48bb46b8429818ed1f9bf55dcc330"
+  },
+  "id": "tXwTzlSbE5z2fdv4",
+  "tags": []
+}
